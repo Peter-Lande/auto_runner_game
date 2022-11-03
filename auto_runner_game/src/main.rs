@@ -1,17 +1,18 @@
-use std::ops::Range;
-
 use bevy::{prelude::*, sprite::Anchor};
 use rand::prelude::*;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .insert_resource(ObstacleOnScreen(false))
         .add_startup_system(initialization)
         .add_system(player_jump)
         .add_system(obstacle_movement)
         .add_system(keyboard_input)
         .run();
 }
+
+struct ObstacleOnScreen(bool);
 
 #[derive(Component)]
 enum Jumping {
@@ -62,6 +63,23 @@ fn initialization(mut commands: Commands, mut windows: ResMut<Windows>) {
             delay_start: 1.0,
             delay_end: 3.0,
         });
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgb(0., 1., 0.),
+                custom_size: Some(Vec2::new(50., 75.)),
+                anchor: Anchor::BottomCenter,
+                ..default()
+            },
+            transform: Transform::from_xyz(right_edge + 25., -250., 0.),
+            ..default()
+        })
+        .insert(Obstacle {
+            moving: false,
+            delay: Timer::from_seconds(3.0, false),
+            delay_start: 3.0,
+            delay_end: 6.0,
+        });
 }
 
 fn player_jump(
@@ -95,6 +113,7 @@ fn player_jump(
 fn obstacle_movement(
     time: Res<Time>,
     windows: Res<Windows>,
+    mut on_screen: ResMut<ObstacleOnScreen>,
     mut obstacle_position: Query<(&mut Transform, &mut Sprite, &mut Obstacle), With<Obstacle>>,
 ) {
     for (mut transform, sprite, mut obstacle) in &mut obstacle_position {
@@ -109,13 +128,13 @@ fn obstacle_movement(
                 let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
                 info!(delay);
                 obstacle.delay = Timer::from_seconds(delay, false);
+                on_screen.0 = false;
             } else {
                 transform.translation.x -= 300. * time.delta_seconds();
             }
-        } else {
-            if obstacle.delay.tick(time.delta()).just_finished() {
-                obstacle.moving = true;
-            }
+        } else if !on_screen.0 && obstacle.delay.tick(time.delta()).just_finished() {
+            obstacle.moving = true;
+            on_screen.0 = true;
         }
     }
 }
