@@ -24,7 +24,8 @@ enum Jumping {
 struct Obstacle {
     moving: bool,
     delay: Timer,
-    delay_range: Range<f32>,
+    delay_start: f32,
+    delay_end: f32,
 }
 
 fn initialization(mut commands: Commands, mut windows: ResMut<Windows>) {
@@ -58,7 +59,8 @@ fn initialization(mut commands: Commands, mut windows: ResMut<Windows>) {
         .insert(Obstacle {
             moving: false,
             delay: Timer::from_seconds(1.0, false),
-            delay_range: (1.0..3.0),
+            delay_start: 1.0,
+            delay_end: 3.0,
         });
 }
 
@@ -104,7 +106,7 @@ fn obstacle_movement(
                 transform.translation.x = window_edge + sprite_edge;
                 obstacle.moving = false;
                 let mut rng = rand::thread_rng();
-                let delay: f32 = rng.gen_range(obstacle.delay_range.clone());
+                let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
                 info!(delay);
                 obstacle.delay = Timer::from_seconds(delay, false);
             } else {
