@@ -1,11 +1,13 @@
-use bevy::{prelude::*, sprite::Anchor};
+use bevy::{prelude::*, sprite::Anchor, text::Text2dBounds, time::Stopwatch};
 use rand::prelude::*;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .insert_resource(ObstacleOnScreen(false))
+        .insert_resource(ScoreStopwatch(Stopwatch::new()))
         .add_startup_system(initialization)
+        .add_system(score)
         .add_system(player_jump)
         .add_system(obstacle_movement)
         .add_system(keyboard_input)
@@ -13,6 +15,10 @@ fn main() {
 }
 
 struct ObstacleOnScreen(bool);
+
+struct ScoreStopwatch(Stopwatch);
+
+struct ScoreFont(Handle<Font>);
 
 #[derive(Component)]
 enum Jumping {
@@ -29,10 +35,23 @@ struct Obstacle {
     delay_end: f32,
 }
 
-fn initialization(mut commands: Commands, mut windows: ResMut<Windows>) {
+#[derive(Component)]
+struct Scoreboard;
+
+fn initialization(
+    mut commands: Commands,
+    mut windows: ResMut<Windows>,
+    asset_server: Res<AssetServer>,
+) {
     let window = windows.primary_mut();
     window.set_resizable(false);
     let right_edge = window.width() / 2.;
+    let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
+    let text_style = TextStyle {
+        font: font_handle.as_weak(),
+        font_size: 20.0,
+        color: Color::WHITE,
+    };
     commands.spawn_bundle(Camera2dBundle::default());
     commands
         .spawn_bundle(SpriteBundle {
@@ -80,6 +99,37 @@ fn initialization(mut commands: Commands, mut windows: ResMut<Windows>) {
             delay_start: 3.0,
             delay_end: 6.0,
         });
+    commands
+        .spawn_bundle(Text2dBundle {
+            text: Text::from_sections(vec![
+                TextSection::new("Score\n", text_style.clone()),
+                TextSection::new("00000", text_style.clone()),
+            ])
+            .with_alignment(TextAlignment::CENTER),
+            transform: Transform::from_xyz(0., (window.height() / 2.) - 20., 0.),
+            ..default()
+        })
+        .insert(Scoreboard);
+    commands.insert_resource(ScoreFont(font_handle));
+}
+
+fn score(
+    time: Res<Time>,
+    font: Res<ScoreFont>,
+    mut score_stopwatch: ResMut<ScoreStopwatch>,
+    mut text_entity: Query<&mut Text, With<Scoreboard>>,
+) {
+    score_stopwatch.0.tick(time.delta());
+    let score: u16 = (score_stopwatch.0.elapsed_secs() / 0.1) as u16;
+    let score_pretext = score.to_string();
+    let score_text = "0".repeat(5 - score_pretext.len()) + &score_pretext;
+    let mut scoreboard_text = text_entity.single_mut();
+    let text_style = TextStyle {
+        font: font.0.as_weak(),
+        font_size: 20.0,
+        color: Color::WHITE,
+    };
+    scoreboard_text.sections[1] = TextSection::new(score_text, text_style);
 }
 
 fn player_jump(
@@ -114,7 +164,8 @@ fn obstacle_movement(
     time: Res<Time>,
     windows: Res<Windows>,
     mut on_screen: ResMut<ObstacleOnScreen>,
-    mut obstacle_position: Query<(&mut Transform, &mut Sprite, &mut Obstacle), With<Obstacle>>,
+    score_stopwatch: Res<ScoreStopwatch>,
+    mut obstacle_position: Query<(&mut Transform, &Sprite, &mut Obstacle), With<Obstacle>>,
 ) {
     for (mut transform, sprite, mut obstacle) in &mut obstacle_position {
         if obstacle.moving {
@@ -126,11 +177,13 @@ fn obstacle_movement(
                 obstacle.moving = false;
                 let mut rng = rand::thread_rng();
                 let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
-                info!(delay);
                 obstacle.delay = Timer::from_seconds(delay, false);
                 on_screen.0 = false;
             } else {
-                transform.translation.x -= 300. * time.delta_seconds();
+                let exponent: u16 = (score_stopwatch.0.elapsed_secs() / 0.9) as u16;
+                let velocity = 300. * 1.01_f32.powf(exponent as f32);
+                info!(velocity);
+                transform.translation.x -= velocity * time.delta_seconds();
             }
         } else if !on_screen.0 && obstacle.delay.tick(time.delta()).just_finished() {
             obstacle.moving = true;
