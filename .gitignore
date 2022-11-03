@@ -1,2 +1,3 @@
 auto_runner_game/target
-autor_runner_game/Cargo.lock
+auto_runner_game/Cargo.lock
+.DS_STORE
