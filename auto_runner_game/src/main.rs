@@ -1,9 +1,14 @@
-use bevy::{prelude::*, sprite::Anchor, text::Text2dBounds, time::Stopwatch};
+use bevy::{prelude::*, sprite::Anchor, time::Stopwatch};
 use rand::prelude::*;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .insert_resource(ClearColor(Color::rgb(
+            245. / 255.,
+            245. / 255.,
+            201. / 255.,
+        )))
         .insert_resource(ObstacleOnScreen(false))
         .insert_resource(ScoreStopwatch(Stopwatch::new()))
         .add_startup_system(initialization)
@@ -23,8 +28,7 @@ struct ScoreFont(Handle<Font>);
 #[derive(Component)]
 enum Jumping {
     None,
-    Up(f32),
-    Down(f32),
+    Jump(f32),
 }
 
 #[derive(Component)]
@@ -45,26 +49,39 @@ fn initialization(
 ) {
     let window = windows.primary_mut();
     window.set_resizable(false);
+    window.set_title("Auto Runner".to_string());
     let right_edge = window.width() / 2.;
     let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
     let text_style = TextStyle {
         font: font_handle.as_weak(),
         font_size: 20.0,
-        color: Color::WHITE,
+        color: Color::BLACK,
     };
     commands.spawn_bundle(Camera2dBundle::default());
+    //Background needs to be on bottom layer
+    commands.spawn_bundle(SpriteBundle {
+        texture: asset_server.load("textures/background.png"),
+        sprite: Sprite {
+            custom_size: Some(Vec2::new(window.width(), window.height())),
+            ..default()
+        },
+        ..default()
+    });
+
+    //Character needs to be on top layer
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(1.0, 0.0, 0.0),
-                custom_size: Some(Vec2::new(50.0, 100.0)),
+                color: Color::rgb(1., 0., 0.),
+                custom_size: Some(Vec2::new(50., 100.)),
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(-500.0, -250.0, 0.0),
+            transform: Transform::from_xyz(-500., -250., 3.),
             ..default()
         })
         .insert(Jumping::None);
+    //Obstacle needs to be below top layer but not in background
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -73,15 +90,16 @@ fn initialization(
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(right_edge + 50., -250., 0.),
+            transform: Transform::from_xyz(right_edge + 50., -250., 2.),
             ..default()
         })
         .insert(Obstacle {
             moving: false,
             delay: Timer::from_seconds(1.0, false),
-            delay_start: 1.0,
-            delay_end: 3.0,
+            delay_start: 1.,
+            delay_end: 3.,
         });
+    //Obstacle needs to be below top layer but not in background
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -90,7 +108,7 @@ fn initialization(
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(right_edge + 25., -250., 0.),
+            transform: Transform::from_xyz(right_edge + 25., -250., 2.),
             ..default()
         })
         .insert(Obstacle {
@@ -99,6 +117,7 @@ fn initialization(
             delay_start: 3.0,
             delay_end: 6.0,
         });
+    //Needs to be on top most layer
     commands
         .spawn_bundle(Text2dBundle {
             text: Text::from_sections(vec![
@@ -106,7 +125,7 @@ fn initialization(
                 TextSection::new("00000", text_style.clone()),
             ])
             .with_alignment(TextAlignment::CENTER),
-            transform: Transform::from_xyz(0., (window.height() / 2.) - 20., 0.),
+            transform: Transform::from_xyz(0., (window.height() / 2.) - 20., 3.),
             ..default()
         })
         .insert(Scoreboard);
@@ -127,7 +146,7 @@ fn score(
     let text_style = TextStyle {
         font: font.0.as_weak(),
         font_size: 20.0,
-        color: Color::WHITE,
+        color: Color::BLACK,
     };
     scoreboard_text.sections[1] = TextSection::new(score_text, text_style);
 }
@@ -139,21 +158,13 @@ fn player_jump(
     for (mut jump_state, mut transform) in &mut player_position {
         match *jump_state {
             Jumping::None => (),
-            Jumping::Up(velocity) => {
-                transform.translation.y += velocity * time.delta_seconds();
-                *jump_state = Jumping::Up(velocity - 200. * time.delta_seconds());
-            }
-            Jumping::Down(velocity) => {
-                transform.translation.y -= velocity * time.delta_seconds();
-                *jump_state = Jumping::Down(velocity + 200. * time.delta_seconds());
+            Jumping::Jump(velocity) => {
+                transform.translation.y +=
+                    velocity * time.delta_seconds() - 400. * time.delta_seconds().powf(2.);
+                *jump_state = Jumping::Jump(velocity - 800. * time.delta_seconds());
             }
         }
-        if transform.translation.y > -50. {
-            match *jump_state {
-                Jumping::Up(velocity) => *jump_state = Jumping::Down(velocity),
-                _ => (),
-            }
-        } else if transform.translation.y <= -250. {
+        if transform.translation.y <= -250. {
             *jump_state = Jumping::None;
             transform.translation.y = -250.;
         }
@@ -197,7 +208,7 @@ fn keyboard_input(keyboard_input: Res<Input<KeyCode>>, mut sprite_jump_state: Qu
         match *jump_state {
             Jumping::None => {
                 if keyboard_input.just_pressed(KeyCode::Space) {
-                    *jump_state = Jumping::Up(400.);
+                    *jump_state = Jumping::Jump(600.);
                 }
             }
             _ => (),
