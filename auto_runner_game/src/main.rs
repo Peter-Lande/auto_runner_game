@@ -4,19 +4,26 @@ use rand::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(ClearColor(Color::rgb(
-            245. / 255.,
-            245. / 255.,
-            201. / 255.,
-        )))
+        .add_state(GameState::InGame)
+        .add_startup_system(setup)
         .insert_resource(ObstacleOnScreen(false))
         .insert_resource(ScoreStopwatch(Stopwatch::new()))
-        .add_startup_system(initialization)
-        .add_system(score)
-        .add_system(player_jump)
-        .add_system(obstacle_movement)
-        .add_system(keyboard_input)
+        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(initialize_game))
+        .add_system_set(
+            SystemSet::on_update(GameState::InGame)
+                .with_system(score)
+                .with_system(player_jump)
+                .with_system(obstacle_movement)
+                .with_system(keyboard_input),
+        )
         .run();
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum GameState {
+    Menu,
+    InGame,
+    Paused,
 }
 
 struct ObstacleOnScreen(bool);
@@ -42,43 +49,57 @@ struct Obstacle {
 #[derive(Component)]
 struct Scoreboard;
 
-fn initialization(
-    mut commands: Commands,
-    mut windows: ResMut<Windows>,
-    asset_server: Res<AssetServer>,
-) {
+const WINDOW_HEIGHT: f32 = 720.;
+const WINDOW_WIDTH: f32 = 1280.;
+const WINDOW_RIGHT: f32 = WINDOW_WIDTH / 2.;
+const WINDOW_LEFT: f32 = -WINDOW_RIGHT;
+const WINDOW_TOP: f32 = WINDOW_HEIGHT / 2.;
+
+const GROUND_HEIGHT: f32 = -250.;
+
+const BACKGROUND_COLOR: Color = Color::rgb(245. / 255., 245. / 255., 210. / 255.);
+
+const ACCELERATION_PLAYER: f32 = 800.;
+const INITIAL_VELOCITY_PLAYER: f32 = 600.;
+
+const INITIAL_VELOCITY_OBSTACLE: f32 = 300.;
+
+fn setup(mut commands: Commands, mut windows: ResMut<Windows>) {
+    commands.spawn_bundle(Camera2dBundle::default());
     let window = windows.primary_mut();
     window.set_resizable(false);
     window.set_title("Auto Runner".to_string());
-    let right_edge = window.width() / 2.;
+    window.set_resolution(WINDOW_WIDTH, WINDOW_HEIGHT);
+}
+
+fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
     let text_style = TextStyle {
         font: font_handle.as_weak(),
         font_size: 20.0,
         color: Color::BLACK,
     };
-    commands.spawn_bundle(Camera2dBundle::default());
+
     //Background needs to be on bottom layer
     commands.spawn_bundle(SpriteBundle {
         texture: asset_server.load("textures/background.png"),
         sprite: Sprite {
-            custom_size: Some(Vec2::new(window.width(), window.height())),
-            color: Color::rgb(245. / 255., 245. / 255., 210. / 255.),
+            custom_size: Some(Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
+            color: BACKGROUND_COLOR,
             ..default()
         },
         ..default()
     });
-
     //Character needs to be on top layer
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(1., 0., 0.),
+                color: Color::RED,
                 custom_size: Some(Vec2::new(50., 100.)),
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(-500., -250., 3.),
+            transform: Transform::from_xyz(-500., GROUND_HEIGHT, 3.),
             ..default()
         })
         .insert(Jumping::None);
@@ -86,12 +107,12 @@ fn initialization(
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(0., 1., 0.),
+                color: Color::GREEN,
                 custom_size: Some(Vec2::new(100., 50.)),
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(right_edge + 50., -250., 2.),
+            transform: Transform::from_xyz(WINDOW_RIGHT + 50., GROUND_HEIGHT, 2.),
             ..default()
         })
         .insert(Obstacle {
@@ -104,12 +125,12 @@ fn initialization(
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(0., 1., 0.),
+                color: Color::BLUE,
                 custom_size: Some(Vec2::new(50., 75.)),
                 anchor: Anchor::BottomCenter,
                 ..default()
             },
-            transform: Transform::from_xyz(right_edge + 25., -250., 2.),
+            transform: Transform::from_xyz(WINDOW_RIGHT + 25., GROUND_HEIGHT, 2.),
             ..default()
         })
         .insert(Obstacle {
@@ -126,7 +147,7 @@ fn initialization(
                 TextSection::new("00000", text_style.clone()),
             ])
             .with_alignment(TextAlignment::CENTER),
-            transform: Transform::from_xyz(0., (window.height() / 2.) - 20., 3.),
+            transform: Transform::from_xyz(0., WINDOW_TOP - 20., 3.),
             ..default()
         })
         .insert(Scoreboard);
@@ -160,32 +181,29 @@ fn player_jump(
         match *jump_state {
             Jumping::None => (),
             Jumping::Jump(velocity) => {
-                transform.translation.y +=
-                    velocity * time.delta_seconds() - 400. * time.delta_seconds().powf(2.);
-                *jump_state = Jumping::Jump(velocity - 800. * time.delta_seconds());
+                transform.translation.y += velocity * time.delta_seconds()
+                    - (ACCELERATION_PLAYER / 2.) * time.delta_seconds().powf(2.);
+                *jump_state = Jumping::Jump(velocity - ACCELERATION_PLAYER * time.delta_seconds());
             }
         }
-        if transform.translation.y <= -250. {
+        if transform.translation.y <= GROUND_HEIGHT {
             *jump_state = Jumping::None;
-            transform.translation.y = -250.;
+            transform.translation.y = GROUND_HEIGHT;
         }
     }
 }
 
 fn obstacle_movement(
     time: Res<Time>,
-    windows: Res<Windows>,
     mut on_screen: ResMut<ObstacleOnScreen>,
     score_stopwatch: Res<ScoreStopwatch>,
     mut obstacle_position: Query<(&mut Transform, &Sprite, &mut Obstacle), With<Obstacle>>,
 ) {
     for (mut transform, sprite, mut obstacle) in &mut obstacle_position {
         if obstacle.moving {
-            let window = windows.primary();
-            let window_edge = window.width() / 2.;
             let sprite_edge = sprite.custom_size.unwrap_or_default().x / 2.;
-            if transform.translation.x < -(window_edge + sprite_edge) {
-                transform.translation.x = window_edge + sprite_edge;
+            if transform.translation.x < WINDOW_LEFT - sprite_edge {
+                transform.translation.x = WINDOW_RIGHT + sprite_edge;
                 obstacle.moving = false;
                 let mut rng = rand::thread_rng();
                 let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
@@ -193,7 +211,7 @@ fn obstacle_movement(
                 on_screen.0 = false;
             } else {
                 let exponent: u16 = (score_stopwatch.0.elapsed_secs() / 0.9) as u16;
-                let velocity = 300. * 1.01_f32.powf(exponent as f32);
+                let velocity = INITIAL_VELOCITY_OBSTACLE * 1.01_f32.powf(exponent as f32);
                 transform.translation.x -= velocity * time.delta_seconds();
             }
         } else if !on_screen.0 && obstacle.delay.tick(time.delta()).just_finished() {
@@ -208,7 +226,7 @@ fn keyboard_input(keyboard_input: Res<Input<KeyCode>>, mut sprite_jump_state: Qu
         match *jump_state {
             Jumping::None => {
                 if keyboard_input.just_pressed(KeyCode::Space) {
-                    *jump_state = Jumping::Jump(600.);
+                    *jump_state = Jumping::Jump(INITIAL_VELOCITY_PLAYER);
                 }
             }
             _ => (),
