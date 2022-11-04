@@ -63,6 +63,7 @@ fn initialization(
         texture: asset_server.load("textures/background.png"),
         sprite: Sprite {
             custom_size: Some(Vec2::new(window.width(), window.height())),
+            color: Color::rgb(245. / 255., 245. / 255., 210. / 255.),
             ..default()
         },
         ..default()
@@ -193,7 +194,6 @@ fn obstacle_movement(
             } else {
                 let exponent: u16 = (score_stopwatch.0.elapsed_secs() / 0.9) as u16;
                 let velocity = 300. * 1.01_f32.powf(exponent as f32);
-                info!(velocity);
                 transform.translation.x -= velocity * time.delta_seconds();
             }
         } else if !on_screen.0 && obstacle.delay.tick(time.delta()).just_finished() {
