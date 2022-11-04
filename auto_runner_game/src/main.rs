@@ -6,7 +6,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_state(GameState::InGame)
         .add_startup_system(setup)
-        .insert_resource(ObstacleOnScreen(false))
+        .insert_resource(ObstacleCanSpawn(true))
         .insert_resource(ScoreStopwatch(Stopwatch::new()))
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(initialize_game))
         .add_system_set(
@@ -26,7 +26,7 @@ enum GameState {
     Paused,
 }
 
-struct ObstacleOnScreen(bool);
+struct ObstacleCanSpawn(bool);
 
 struct ScoreStopwatch(Stopwatch);
 
@@ -41,6 +41,7 @@ enum Jumping {
 #[derive(Component)]
 struct Obstacle {
     moving: bool,
+    velocity: f32,
     delay: Timer,
     delay_start: f32,
     delay_end: f32,
@@ -64,22 +65,12 @@ const INITIAL_VELOCITY_PLAYER: f32 = 600.;
 
 const INITIAL_VELOCITY_OBSTACLE: f32 = 300.;
 
-fn setup(mut commands: Commands, mut windows: ResMut<Windows>) {
+fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(Camera2dBundle::default());
     let window = windows.primary_mut();
     window.set_resizable(false);
     window.set_title("Auto Runner".to_string());
     window.set_resolution(WINDOW_WIDTH, WINDOW_HEIGHT);
-}
-
-fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
-    let text_style = TextStyle {
-        font: font_handle.as_weak(),
-        font_size: 20.0,
-        color: Color::BLACK,
-    };
-
     //Background needs to be on bottom layer
     commands.spawn_bundle(SpriteBundle {
         texture: asset_server.load("textures/background.png"),
@@ -90,6 +81,15 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
         },
         ..default()
     });
+}
+
+fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
+    let text_style = TextStyle {
+        font: font_handle.as_weak(),
+        font_size: 20.0,
+        color: Color::BLACK,
+    };
     //Character needs to be on top layer
     commands
         .spawn_bundle(SpriteBundle {
@@ -117,6 +117,7 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
         })
         .insert(Obstacle {
             moving: false,
+            velocity: INITIAL_VELOCITY_OBSTACLE,
             delay: Timer::from_seconds(1.0, false),
             delay_start: 1.,
             delay_end: 3.,
@@ -135,6 +136,7 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
         })
         .insert(Obstacle {
             moving: false,
+            velocity: INITIAL_VELOCITY_OBSTACLE,
             delay: Timer::from_seconds(3.0, false),
             delay_start: 3.0,
             delay_end: 6.0,
@@ -144,7 +146,7 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
         .spawn_bundle(Text2dBundle {
             text: Text::from_sections(vec![
                 TextSection::new("Score\n", text_style.clone()),
-                TextSection::new("00000", text_style.clone()),
+                TextSection::new("00000", text_style),
             ])
             .with_alignment(TextAlignment::CENTER),
             transform: Transform::from_xyz(0., WINDOW_TOP - 20., 3.),
@@ -195,12 +197,13 @@ fn player_jump(
 
 fn obstacle_movement(
     time: Res<Time>,
-    mut on_screen: ResMut<ObstacleOnScreen>,
+    mut can_spawn: ResMut<ObstacleCanSpawn>,
     score_stopwatch: Res<ScoreStopwatch>,
     mut obstacle_position: Query<(&mut Transform, &Sprite, &mut Obstacle), With<Obstacle>>,
 ) {
     for (mut transform, sprite, mut obstacle) in &mut obstacle_position {
         if obstacle.moving {
+            transform.translation.x -= obstacle.velocity * time.delta_seconds();
             let sprite_edge = sprite.custom_size.unwrap_or_default().x / 2.;
             if transform.translation.x < WINDOW_LEFT - sprite_edge {
                 transform.translation.x = WINDOW_RIGHT + sprite_edge;
@@ -208,28 +211,26 @@ fn obstacle_movement(
                 let mut rng = rand::thread_rng();
                 let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
                 obstacle.delay = Timer::from_seconds(delay, false);
-                on_screen.0 = false;
-            } else {
-                let exponent: u16 = (score_stopwatch.0.elapsed_secs() / 0.9) as u16;
-                let velocity = INITIAL_VELOCITY_OBSTACLE * 1.01_f32.powf(exponent as f32);
-                transform.translation.x -= velocity * time.delta_seconds();
+            } else if transform.translation.x < 0. {
+                can_spawn.0 = true;
+            } else if transform.translation.x < WINDOW_RIGHT {
+                can_spawn.0 = false;
             }
-        } else if !on_screen.0 && obstacle.delay.tick(time.delta()).just_finished() {
+        } else if can_spawn.0 && obstacle.delay.tick(time.delta()).just_finished() {
             obstacle.moving = true;
-            on_screen.0 = true;
+            can_spawn.0 = false;
+            let exponent: u16 = (score_stopwatch.0.elapsed_secs() / 0.9) as u16;
+            obstacle.velocity = INITIAL_VELOCITY_OBSTACLE * 1.01_f32.powf(exponent as f32);
         }
     }
 }
 
 fn keyboard_input(keyboard_input: Res<Input<KeyCode>>, mut sprite_jump_state: Query<&mut Jumping>) {
     for mut jump_state in &mut sprite_jump_state {
-        match *jump_state {
-            Jumping::None => {
-                if keyboard_input.just_pressed(KeyCode::Space) {
-                    *jump_state = Jumping::Jump(INITIAL_VELOCITY_PLAYER);
-                }
+        if let Jumping::None = *jump_state {
+            if keyboard_input.just_pressed(KeyCode::Space) {
+                *jump_state = Jumping::Jump(INITIAL_VELOCITY_PLAYER);
             }
-            _ => (),
         }
     }
 }
