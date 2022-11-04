@@ -4,10 +4,13 @@ use rand::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_state(GameState::InGame)
+        .add_state(GameState::Menu)
         .add_startup_system(setup)
         .insert_resource(ObstacleCanSpawn(true))
         .insert_resource(ScoreStopwatch(Stopwatch::new()))
+        .add_system_set(SystemSet::on_enter(GameState::Menu).with_system(initialize_menu))
+        .add_system_set(SystemSet::on_update(GameState::Menu).with_system(menu))
+        .add_system_set(SystemSet::on_exit(GameState::Menu).with_system(menu_cleanup))
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(initialize_game))
         .add_system_set(
             SystemSet::on_update(GameState::InGame)
@@ -17,6 +20,10 @@ fn main() {
                 .with_system(keyboard_input),
         )
         .run();
+}
+
+struct MenuData {
+    button_entity: Entity,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -59,6 +66,9 @@ const WINDOW_TOP: f32 = WINDOW_HEIGHT / 2.;
 const GROUND_HEIGHT: f32 = -250.;
 
 const BACKGROUND_COLOR: Color = Color::rgb(245. / 255., 245. / 255., 210. / 255.);
+const NORMAL_BUTTON: Color = Color::BLACK;
+const HOVER_BUTTON: Color = Color::GRAY;
+const PRESSED_BUTTON: Color = Color::WHITE;
 
 const ACCELERATION_PLAYER: f32 = 800.;
 const INITIAL_VELOCITY_PLAYER: f32 = 600.;
@@ -71,6 +81,8 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
     window.set_resizable(false);
     window.set_title("Auto Runner".to_string());
     window.set_resolution(WINDOW_WIDTH, WINDOW_HEIGHT);
+    let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
+    commands.insert_resource(ScoreFont(font_handle));
     //Background needs to be on bottom layer
     commands.spawn_bundle(SpriteBundle {
         texture: asset_server.load("textures/background.png"),
@@ -83,10 +95,63 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
     });
 }
 
-fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
+fn initialize_menu(mut commands: Commands, font: Res<ScoreFont>) {
+    let button_entity = commands
+        .spawn_bundle(ButtonBundle {
+            style: Style {
+                size: Size::new(Val::Px(100.), Val::Px(30.)),
+                margin: UiRect::all(Val::Auto),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            color: NORMAL_BUTTON.into(),
+            ..default()
+        })
+        .with_children(|parent| {
+            parent.spawn_bundle(TextBundle::from_section(
+                "PLAY",
+                TextStyle {
+                    font: font.0.as_weak(),
+                    font_size: 36.,
+                    color: Color::WHITE,
+                },
+            ));
+        })
+        .id();
+    commands.insert_resource(MenuData { button_entity })
+}
+
+fn menu(
+    mut state: ResMut<State<GameState>>,
+    mut interaction_query: Query<
+        (&Interaction, &mut UiColor),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Clicked => {
+                *color = PRESSED_BUTTON.into();
+                state.set(GameState::InGame).unwrap();
+            }
+            Interaction::Hovered => {
+                *color = HOVER_BUTTON.into();
+            }
+            Interaction::None => {
+                *color = NORMAL_BUTTON.into();
+            }
+        }
+    }
+}
+
+fn menu_cleanup(mut commands: Commands, menu_data: Res<MenuData>) {
+    commands.entity(menu_data.button_entity).despawn_recursive();
+}
+
+fn initialize_game(mut commands: Commands, font: Res<ScoreFont>) {
     let text_style = TextStyle {
-        font: font_handle.as_weak(),
+        font: font.0.as_weak(),
         font_size: 20.0,
         color: Color::BLACK,
     };
@@ -138,8 +203,8 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
             moving: false,
             velocity: INITIAL_VELOCITY_OBSTACLE,
             delay: Timer::from_seconds(3.0, false),
-            delay_start: 3.0,
-            delay_end: 6.0,
+            delay_start: 3.,
+            delay_end: 6.,
         });
     //Needs to be on top most layer
     commands
@@ -153,7 +218,6 @@ fn initialize_game(mut commands: Commands, asset_server: Res<AssetServer>) {
             ..default()
         })
         .insert(Scoreboard);
-    commands.insert_resource(ScoreFont(font_handle));
 }
 
 fn score(
