@@ -1,10 +1,15 @@
-use bevy::{prelude::*, sprite::Anchor, time::Stopwatch};
+use bevy::{
+    prelude::*,
+    sprite::{collide_aabb::collide, Anchor},
+    time::Stopwatch,
+};
 use rand::prelude::*;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_state(GameState::Menu)
+        .add_event::<CollisionEvent>()
         .add_startup_system(setup)
         .insert_resource(ObstacleCanSpawn(true))
         .insert_resource(ScoreStopwatch(Stopwatch::new()))
@@ -17,8 +22,11 @@ fn main() {
                 .with_system(score)
                 .with_system(player_jump)
                 .with_system(obstacle_movement)
+                .with_system(check_for_collision)
+                .with_system(collision_detection)
                 .with_system(keyboard_input),
         )
+        .add_system_set(SystemSet::on_exit(GameState::InGame).with_system(game_cleanup))
         .run();
 }
 
@@ -30,7 +38,6 @@ struct MenuData {
 enum GameState {
     Menu,
     InGame,
-    Paused,
 }
 
 struct ObstacleCanSpawn(bool);
@@ -57,6 +64,12 @@ struct Obstacle {
 #[derive(Component)]
 struct Scoreboard;
 
+#[derive(Component)]
+struct Background;
+
+#[derive(Default)]
+struct CollisionEvent;
+
 const WINDOW_HEIGHT: f32 = 720.;
 const WINDOW_WIDTH: f32 = 1280.;
 const WINDOW_RIGHT: f32 = WINDOW_WIDTH / 2.;
@@ -76,7 +89,9 @@ const INITIAL_VELOCITY_PLAYER: f32 = 600.;
 const INITIAL_VELOCITY_OBSTACLE: f32 = 300.;
 
 fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res<AssetServer>) {
-    commands.spawn_bundle(Camera2dBundle::default());
+    commands
+        .spawn_bundle(Camera2dBundle::default())
+        .insert(Background);
     let window = windows.primary_mut();
     window.set_resizable(false);
     window.set_title("Auto Runner".to_string());
@@ -84,15 +99,17 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
     let font_handle: Handle<Font> = asset_server.load("fonts/PixelEmulator.ttf");
     commands.insert_resource(ScoreFont(font_handle));
     //Background needs to be on bottom layer
-    commands.spawn_bundle(SpriteBundle {
-        texture: asset_server.load("textures/background.png"),
-        sprite: Sprite {
-            custom_size: Some(Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
-            color: BACKGROUND_COLOR,
+    commands
+        .spawn_bundle(SpriteBundle {
+            texture: asset_server.load("textures/background.png"),
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
+                color: BACKGROUND_COLOR,
+                ..default()
+            },
             ..default()
-        },
-        ..default()
-    });
+        })
+        .insert(Background);
 }
 
 fn initialize_menu(mut commands: Commands, font: Res<ScoreFont>) {
@@ -183,8 +200,8 @@ fn initialize_game(mut commands: Commands, font: Res<ScoreFont>) {
         .insert(Obstacle {
             moving: false,
             velocity: INITIAL_VELOCITY_OBSTACLE,
-            delay: Timer::from_seconds(1.0, false),
-            delay_start: 1.,
+            delay: Timer::from_seconds(0.5, false),
+            delay_start: 0.5,
             delay_end: 3.,
         });
     //Obstacle needs to be below top layer but not in background
@@ -203,7 +220,7 @@ fn initialize_game(mut commands: Commands, font: Res<ScoreFont>) {
             moving: false,
             velocity: INITIAL_VELOCITY_OBSTACLE,
             delay: Timer::from_seconds(3.0, false),
-            delay_start: 3.,
+            delay_start: 2.,
             delay_end: 6.,
         });
     //Needs to be on top most layer
@@ -218,6 +235,57 @@ fn initialize_game(mut commands: Commands, font: Res<ScoreFont>) {
             ..default()
         })
         .insert(Scoreboard);
+}
+
+fn game_cleanup(mut commands: Commands, entity_query: Query<Entity, Without<Background>>) {
+    for entity in &entity_query {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn check_for_collision(
+    mut collision_events: EventWriter<CollisionEvent>,
+    player_query: Query<(&Transform, &Sprite), (With<Jumping>, Without<Obstacle>)>,
+    obstacle_query: Query<(&Transform, &Sprite), With<Obstacle>>,
+) {
+    let (player_transform, player_sprite) = player_query.single();
+    let player_size = player_sprite.custom_size.unwrap_or_default();
+    for (obstacle_transform, obstacle_sprite) in &obstacle_query {
+        let obstacle_size = obstacle_sprite.custom_size.unwrap_or_default();
+        let collision = collide(
+            Vec3::new(
+                player_transform.translation.x,
+                player_transform.translation.y + player_size.y / 2.,
+                player_transform.translation.z,
+            ),
+            player_size,
+            Vec3::new(
+                obstacle_transform.translation.x,
+                obstacle_transform.translation.y + obstacle_size.y / 2.,
+                obstacle_transform.translation.z,
+            ),
+            obstacle_size,
+        );
+        if let Some(_) = collision {
+            info!("Collision Detected! Player Location: {}, Player Size: {}, Obstacle Location: {}, Obstacle Size: {}", player_transform.translation + player_size.y / 2.,
+                player_size,
+                obstacle_transform.translation + obstacle_size.y / 2.,
+                obstacle_size);
+            collision_events.send_default();
+        }
+    }
+}
+
+fn collision_detection(
+    collision_events: EventReader<CollisionEvent>,
+    mut state: ResMut<State<GameState>>,
+    mut stopwatch: ResMut<ScoreStopwatch>,
+) {
+    if !collision_events.is_empty() {
+        collision_events.clear();
+        stopwatch.0.reset();
+        state.set(GameState::Menu).unwrap();
+    }
 }
 
 fn score(
@@ -263,14 +331,14 @@ fn obstacle_movement(
     time: Res<Time>,
     mut can_spawn: ResMut<ObstacleCanSpawn>,
     score_stopwatch: Res<ScoreStopwatch>,
-    mut obstacle_position: Query<(&mut Transform, &Sprite, &mut Obstacle), With<Obstacle>>,
+    mut obstacle_query: Query<(&mut Transform, &Sprite, &mut Obstacle), With<Obstacle>>,
 ) {
-    for (mut transform, sprite, mut obstacle) in &mut obstacle_position {
+    for (mut transform, obstacle_sprite, mut obstacle) in &mut obstacle_query {
         if obstacle.moving {
-            transform.translation.x -= obstacle.velocity * time.delta_seconds();
-            let sprite_edge = sprite.custom_size.unwrap_or_default().x / 2.;
-            if transform.translation.x < WINDOW_LEFT - sprite_edge {
-                transform.translation.x = WINDOW_RIGHT + sprite_edge;
+            let obstacle_size = obstacle_sprite.custom_size.unwrap_or_default();
+            let obstacle_edge = obstacle_size.x / 2.;
+            if transform.translation.x < WINDOW_LEFT - obstacle_edge {
+                transform.translation.x = WINDOW_RIGHT + obstacle_edge;
                 obstacle.moving = false;
                 let mut rng = rand::thread_rng();
                 let delay: f32 = rng.gen_range(obstacle.delay_start..obstacle.delay_end);
@@ -280,6 +348,7 @@ fn obstacle_movement(
             } else if transform.translation.x < WINDOW_RIGHT {
                 can_spawn.0 = false;
             }
+            transform.translation.x -= obstacle.velocity * time.delta_seconds();
         } else if can_spawn.0 && obstacle.delay.tick(time.delta()).just_finished() {
             obstacle.moving = true;
             can_spawn.0 = false;
