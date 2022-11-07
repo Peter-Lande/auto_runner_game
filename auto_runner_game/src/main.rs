@@ -30,10 +30,6 @@ fn main() {
         .run();
 }
 
-struct MenuData {
-    button_entity: Entity,
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum GameState {
     Menu,
@@ -66,6 +62,9 @@ struct Scoreboard;
 
 #[derive(Component)]
 struct Background;
+
+#[derive(Component)]
+struct MenuItem;
 
 #[derive(Default)]
 struct CollisionEvent;
@@ -112,8 +111,12 @@ fn setup(mut commands: Commands, mut windows: ResMut<Windows>, asset_server: Res
         .insert(Background);
 }
 
-fn initialize_menu(mut commands: Commands, font: Res<ScoreFont>) {
-    let button_entity = commands
+fn initialize_menu(
+    mut commands: Commands,
+    font: Res<ScoreFont>,
+    score_stopwatch: Res<ScoreStopwatch>,
+) {
+    commands
         .spawn_bundle(ButtonBundle {
             style: Style {
                 size: Size::new(Val::Px(100.), Val::Px(30.)),
@@ -135,8 +138,28 @@ fn initialize_menu(mut commands: Commands, font: Res<ScoreFont>) {
                 },
             ));
         })
-        .id();
-    commands.insert_resource(MenuData { button_entity })
+        .insert(MenuItem);
+    if score_stopwatch.0.elapsed_secs() != 0. {
+        let score: u16 = (score_stopwatch.0.elapsed_secs() / 0.1) as u16;
+        let score_pretext = score.to_string();
+        let score_text = "0".repeat(5 - score_pretext.len()) + &score_pretext;
+        let text_style = TextStyle {
+            font: font.0.as_weak(),
+            font_size: 20.0,
+            color: Color::BLACK,
+        };
+        commands
+            .spawn_bundle(Text2dBundle {
+                text: Text::from_sections(vec![
+                    TextSection::new("Score\n", text_style.clone()),
+                    TextSection::new(score_text, text_style),
+                ])
+                .with_alignment(TextAlignment::CENTER),
+                transform: Transform::from_xyz(0., WINDOW_TOP - 20., 3.),
+                ..default()
+            })
+            .insert(MenuItem);
+    }
 }
 
 fn menu(
@@ -162,8 +185,15 @@ fn menu(
     }
 }
 
-fn menu_cleanup(mut commands: Commands, menu_data: Res<MenuData>) {
-    commands.entity(menu_data.button_entity).despawn_recursive();
+fn menu_cleanup(
+    mut commands: Commands,
+    menu_query: Query<Entity, With<MenuItem>>,
+    mut score_stopwatch: ResMut<ScoreStopwatch>,
+) {
+    for entity_id in &menu_query {
+        commands.entity(entity_id).despawn_recursive();
+    }
+    score_stopwatch.0.reset();
 }
 
 fn initialize_game(mut commands: Commands, font: Res<ScoreFont>) {
@@ -283,7 +313,7 @@ fn collision_detection(
 ) {
     if !collision_events.is_empty() {
         collision_events.clear();
-        stopwatch.0.reset();
+        stopwatch.0.pause();
         state.set(GameState::Menu).unwrap();
     }
 }
