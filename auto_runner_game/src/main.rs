@@ -125,7 +125,7 @@ fn initialize_menu(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            color: NORMAL_BUTTON.into(),
+            color: Color::NONE.into(),
             ..default()
         })
         .with_children(|parent| {
@@ -134,7 +134,7 @@ fn initialize_menu(
                 TextStyle {
                     font: font.0.as_weak(),
                     font_size: 36.,
-                    color: Color::WHITE,
+                    color: NORMAL_BUTTON,
                 },
             ));
         })
@@ -164,22 +164,21 @@ fn initialize_menu(
 
 fn menu(
     mut state: ResMut<State<GameState>>,
-    mut interaction_query: Query<
-        (&Interaction, &mut UiColor),
-        (Changed<Interaction>, With<Button>),
-    >,
+    mut interaction_query: Query<(&Interaction, &Children), (Changed<Interaction>, With<Button>)>,
+    mut text_query: Query<&mut Text>,
 ) {
-    for (interaction, mut color) in &mut interaction_query {
+    for (interaction, children) in &mut interaction_query {
+        let mut text = text_query.get_mut(children[0]).unwrap();
         match *interaction {
             Interaction::Clicked => {
-                *color = PRESSED_BUTTON.into();
+                text.sections[0].style.color = PRESSED_BUTTON.into();
                 state.set(GameState::InGame).unwrap();
             }
             Interaction::Hovered => {
-                *color = HOVER_BUTTON.into();
+                text.sections[0].style.color = HOVER_BUTTON.into();
             }
             Interaction::None => {
-                *color = NORMAL_BUTTON.into();
+                text.sections[0].style.color = NORMAL_BUTTON.into();
             }
         }
     }
@@ -297,10 +296,6 @@ fn check_for_collision(
             obstacle_size,
         );
         if let Some(_) = collision {
-            info!("Collision Detected! Player Location: {}, Player Size: {}, Obstacle Location: {}, Obstacle Size: {}", player_transform.translation + player_size.y / 2.,
-                player_size,
-                obstacle_transform.translation + obstacle_size.y / 2.,
-                obstacle_size);
             collision_events.send_default();
         }
     }
@@ -367,6 +362,7 @@ fn obstacle_movement(
         if obstacle.moving {
             let obstacle_size = obstacle_sprite.custom_size.unwrap_or_default();
             let obstacle_edge = obstacle_size.x / 2.;
+            transform.translation.x -= obstacle.velocity * time.delta_seconds();
             if transform.translation.x < WINDOW_LEFT - obstacle_edge {
                 transform.translation.x = WINDOW_RIGHT + obstacle_edge;
                 obstacle.moving = false;
@@ -378,7 +374,6 @@ fn obstacle_movement(
             } else if transform.translation.x < WINDOW_RIGHT {
                 can_spawn.0 = false;
             }
-            transform.translation.x -= obstacle.velocity * time.delta_seconds();
         } else if can_spawn.0 && obstacle.delay.tick(time.delta()).just_finished() {
             obstacle.moving = true;
             can_spawn.0 = false;
